@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>MERGE.</title>
+<meta name="theme-color" content="#0B0B1A" />
+
+<!-- ==========================================================
+     Ceci est un fichier HTML AUTONOME : pas besoin de "build",
+     pas besoin de Node.js. On charge React directement depuis
+     internet (CDN), comme on chargerait une image.
+     C'est ce qui permet de l'héberger sans ordinateur.
+========================================================== -->
+
+<!-- Permet d'installer le jeu sur l'écran d'accueil comme une vraie appli -->
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icon.png" />
+
+<style>
+  html, body { margin: 0; padding: 0; background: #0B0B1A; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React + Babel depuis un CDN : c'est ce qui remplace le "build" -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ============================================================
+// CONCEPTS POUR DEBUTANT :
+// - useState  -> une "boite" qui garde une info et redessine l'app quand elle change
+// - useEffect -> du code qui se lance automatiquement (ex: écouter le clavier)
+// - fonction  -> une "recette" qu'on réutilise (ex: déplacer les tuiles)
+// ============================================================
+
+const SIZE = 4; // grille 4x4
+
+const TILE_STYLES = {
+  2: { bg: "#3EC1D3", text: "#0B0B1A" },
+  4: { bg: "#5FD068", text: "#0B0B1A" },
+  8: { bg: "#F7D269", text: "#0B0B1A" },
+  16: { bg: "#FFA45B", text: "#0B0B1A" },
+  32: { bg: "#FF6B6B", text: "#0B0B1A" },
+  64: { bg: "#EE4266", text: "#FFFFFF" },
+  128: { bg: "#C74B93", text: "#FFFFFF" },
+  256: { bg: "#7C4DFF", text: "#FFFFFF" },
+  512: { bg: "#5E60CE", text: "#FFFFFF" },
+  1024: { bg: "#4EA8DE", text: "#0B0B1A" },
+  2048: { bg: "#F4F1DE", text: "#0B0B1A" },
+};
+
+const TILE_EMOJI = {
+  0: "⬛", 2: "🟦", 4: "🟩", 8: "🟨", 16: "🟧", 32: "🟥",
+  64: "🟪", 128: "🟪", 256: "🟪", 512: "🟪", 1024: "⬜", 2048: "⭐",
+};
+
+function buildShareText(grid, score, won) {
+  const rows = grid.map((row) => row.map((v) => TILE_EMOJI[v] ?? "⬛").join("")).join("\n");
+  const headline = won ? "J'ai atteint 2048 !" : `Score : ${score}`;
+  return `MERGE. — ${headline}\n${rows}\nJoue toi aussi 👉`;
+}
+
+function emptyGrid() {
+  return Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+}
+
+function addRandomTile(grid) {
+  const empties = [];
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      if (grid[r][c] === 0) empties.push([r, c]);
+    }
+  }
+  if (empties.length === 0) return grid;
+  const [r, c] = empties[Math.floor(Math.random() * empties.length)];
+  const newGrid = grid.map((row) => [...row]);
+  newGrid[r][c] = Math.random() < 0.9 ? 2 : 4;
+  return newGrid;
+}
+
+function collapseLine(line) {
+  const nums = line.filter((v) => v !== 0);
+  const result = [];
+  let gained = 0;
+  for (let i = 0; i < nums.length; i++) {
+    if (nums[i] === nums[i + 1]) {
+      const merged = nums[i] * 2;
+      result.push(merged);
+      gained += merged;
+      i++;
+    } else {
+      result.push(nums[i]);
+    }
+  }
+  while (result.length < SIZE) result.push(0);
+  const moved = result.some((v, i) => v !== line[i]);
+  return { line: result, gained, moved };
+}
+
+function reverse(line) {
+  return [...line].reverse();
+}
+
+function move(grid, direction) {
+  let rows = grid.map((row) => [...row]);
+  let totalGained = 0;
+  let anyMoved = false;
+
+  const transpose = (g) => g[0].map((_, c) => g.map((row) => row[c]));
+
+  if (direction === "left" || direction === "right") {
+    rows = rows.map((row) => {
+      const line = direction === "right" ? reverse(row) : row;
+      const { line: newLine, gained, moved } = collapseLine(line);
+      totalGained += gained;
+      anyMoved = anyMoved || moved;
+      return direction === "right" ? reverse(newLine) : newLine;
+    });
+  } else {
+    let cols = transpose(rows);
+    cols = cols.map((col) => {
+      const line = direction === "down" ? reverse(col) : col;
+      const { line: newLine, gained, moved } = collapseLine(line);
+      totalGained += gained;
+      anyMoved = anyMoved || moved;
+      return direction === "down" ? reverse(newLine) : newLine;
+    });
+    rows = transpose(cols);
+  }
+
+  return { grid: rows, gained: totalGained, moved: anyMoved };
+}
+
+function canMove(grid) {
+  for (const dir of ["left", "right", "up", "down"]) {
+    if (move(grid, dir).moved) return true;
+  }
+  return false;
+}
+
+function PuzzleMerge() {
+  const [grid, setGrid] = useState(() => addRandomTile(addRandomTile(emptyGrid())));
+  const [score, setScore] = useState(0);
+  const [best, setBest] = useState(0);
+  const [gameOver, setGameOver] = useState(false);
+  const [won, setWon] = useState(false);
+  const [mergedPulse, setMergedPulse] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState("");
+  const touchStart = useRef(null);
+
+  const handleShare = async () => {
+    const text = buildShareText(grid, score, won);
+    try {
+      if (navigator.share) {
+        await navigator.share({ text });
+      } else {
+        await navigator.clipboard.writeText(text);
+        setShareFeedback("Copié dans le presse-papier !");
+        setTimeout(() => setShareFeedback(""), 2000);
+      }
+    } catch (err) {}
+  };
+
+  const handleMove = useCallback((direction) => {
+    if (gameOver) return;
+    setGrid((prevGrid) => {
+      const { grid: newGrid, gained, moved } = move(prevGrid, direction);
+      if (!moved) return prevGrid;
+      const finalGrid = addRandomTile(newGrid);
+
+      if (gained > 0) {
+        setMergedPulse(true);
+        setTimeout(() => setMergedPulse(false), 260);
+      }
+
+      setScore((s) => {
+        const next = s + gained;
+        setBest((b) => Math.max(b, next));
+        return next;
+      });
+
+      if (finalGrid.flat().includes(2048)) setWon(true);
+      if (!canMove(finalGrid)) setGameOver(true);
+
+      return finalGrid;
+    });
+  }, [gameOver]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const map = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
+      if (map[e.key]) {
+        e.preventDefault();
+        handleMove(map[e.key]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleMove]);
+
+  const onTouchStart = (e) => {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+  };
+  const onTouchEnd = (e) => {
+    if (!touchStart.current) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.current.x;
+    const dy = t.clientY - touchStart.current.y;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+    if (Math.max(absX, absY) < 24) return;
+    if (absX > absY) handleMove(dx > 0 ? "right" : "left");
+    else handleMove(dy > 0 ? "down" : "up");
+    touchStart.current = null;
+  };
+
+  const restart = () => {
+    setGrid(addRandomTile(addRandomTile(emptyGrid())));
+    setScore(0);
+    setGameOver(false);
+    setWon(false);
+  };
+
+  const buttonStyle = {
+    background: "#FF6B6B", color: "#0B0B1A", border: "none", borderRadius: 10,
+    padding: "12px 18px", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700,
+    fontSize: 14, letterSpacing: "0.04em", cursor: "pointer",
+  };
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "radial-gradient(circle at 50% 0%, #232346 0%, #0B0B1A 60%)",
+        display: "flex", flexDirection: "column", alignItems: "center",
+        padding: "28px 16px", fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+        color: "#F4F1DE", touchAction: "none", userSelect: "none",
+      }}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
+      <div style={{ width: "100%", maxWidth: 420 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 18 }}>
+          <div>
+            <h1 style={{ fontFamily: "'Space Grotesk', ui-sans-serif, sans-serif", fontSize: 34, fontWeight: 700, letterSpacing: "-0.02em", margin: 0, lineHeight: 1 }}>
+              MERGE<span style={{ color: "#FF6B6B" }}>.</span>
+            </h1>
+            <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.55, letterSpacing: "0.08em" }}>GLISSE POUR FUSIONNER</p>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <ScoreBox label="SCORE" value={score} pulse={mergedPulse} />
+            <ScoreBox label="BEST" value={best} />
+          </div>
+        </div>
+
+        <div style={{
+          position: "relative", background: "#161631", borderRadius: 18, padding: 10,
+          display: "grid", gridTemplateColumns: `repeat(${SIZE}, 1fr)`, gap: 10,
+          boxShadow: mergedPulse ? "0 0 0 2px #FF6B6B55, 0 0 40px 4px #FF6B6B33" : "0 0 0 1px #ffffff0f",
+          transition: "box-shadow 200ms ease",
+        }}>
+          {grid.flat().map((value, i) => (
+            <div key={i} style={{
+              aspectRatio: "1 / 1", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: value > 512 ? 20 : value > 64 ? 24 : 28, fontWeight: 700,
+              background: value ? TILE_STYLES[value]?.bg ?? "#F4F1DE" : "#20203f",
+              color: value ? TILE_STYLES[value]?.text ?? "#0B0B1A" : "transparent",
+              transform: value ? "scale(1)" : "scale(0.94)",
+              transition: "transform 120ms ease, background 120ms ease",
+            }}>
+              {value || ""}
+            </div>
+          ))}
+
+          {(gameOver || won) && (
+            <div style={{
+              position: "absolute", inset: 0, background: "#0B0B1Ae6", borderRadius: 18,
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14,
+            }}>
+              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 26, fontWeight: 700, color: won ? "#5FD068" : "#FF6B6B" }}>
+                {won ? "2048 ATTEINT !" : "PLUS DE COUP POSSIBLE"}
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={restart} style={buttonStyle}>REJOUER</button>
+                <button onClick={handleShare} style={{ ...buttonStyle, background: "#5E60CE", color: "#F4F1DE" }}>PARTAGER</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gridTemplateRows: "repeat(2, 52px)", justifyContent: "center", gap: 8, marginTop: 22 }}>
+          <div />
+          <ArrowButton dir="up" onClick={() => handleMove("up")} />
+          <div />
+          <ArrowButton dir="left" onClick={() => handleMove("left")} />
+          <ArrowButton dir="down" onClick={() => handleMove("down")} />
+          <ArrowButton dir="right" onClick={() => handleMove("right")} />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={restart} style={{ ...buttonStyle, flex: 1 }}>NOUVELLE PARTIE</button>
+          <button onClick={handleShare} style={{ ...buttonStyle, flex: 1, background: "#5E60CE", color: "#F4F1DE" }}>PARTAGER</button>
+        </div>
+        {shareFeedback && <div style={{ textAlign: "center", marginTop: 10, fontSize: 12, opacity: 0.7 }}>{shareFeedback}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ScoreBox({ label, value, pulse }) {
+  return (
+    <div style={{
+      background: "#161631", borderRadius: 10, padding: "6px 14px", textAlign: "center", minWidth: 64,
+      boxShadow: pulse ? "0 0 0 2px #FF6B6B77" : "0 0 0 1px #ffffff14", transition: "box-shadow 150ms ease",
+    }}>
+      <div style={{ fontSize: 10, opacity: 0.55, letterSpacing: "0.08em" }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 700 }}>{value}</div>
+    </div>
+  );
+}
+
+const arrows = { up: "↑", down: "↓", left: "←", right: "→" };
+function ArrowButton({ dir, onClick }) {
+  return (
+    <button onClick={onClick} style={{ background: "#20203f", color: "#F4F1DE", border: "1px solid #ffffff14", borderRadius: 12, fontSize: 20, cursor: "pointer" }}>
+      {arrows[dir]}
+    </button>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<PuzzleMerge />);
+</script>
+</body>
+</html>
